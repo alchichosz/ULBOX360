@@ -121,19 +121,72 @@ impl FuseFatxFs {
 
         None
     }
+
+    fn get_file_attr(&mut self, ino: u64) -> Option<FileAttr> {
+        if ino == 1 {
+            return Some(FileAttr {
+                ino: 1,
+                size: 0,
+                blocks: 0,
+                atime: SystemTime::UNIX_EPOCH,
+                mtime: SystemTime::UNIX_EPOCH,
+                ctime: SystemTime::UNIX_EPOCH,
+                crtime: SystemTime::UNIX_EPOCH,
+                kind: FileType::Directory,
+                perm: 0o755,
+                nlink: 2,
+                uid: unsafe { libc::getuid() },
+                gid: unsafe { libc::getgid() },
+                rdev: 0,
+                flags: 0,
+                blksize: 4096,
+            });
+        }
+
+        if let Some(path) = self.inodes.get_path(ino) {
+            if let Ok(dirent) = self.fatx.stat(&path) {
+                return self.dirent_to_attr(ino, &dirent);
+            }
+        }
+        None
+    }
 }
 
 const TTL: Duration = Duration::from_secs(1);
 
 impl Filesystem for FuseFatxFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        let name_str = name.to_string_lossy();
+        if name_str == "." {
+            if let Some(attr) = self.get_file_attr(parent) {
+                reply.entry(&TTL, &attr, 0);
+                return;
+            }
+        }
+
+        if name_str == ".." {
+            let parent_ino = if parent == 1 {
+                1
+            } else if let Some(path_str) = self.inodes.get_path(parent) {
+                let p = PathBuf::from(path_str);
+                let parent_dir = p.parent().unwrap_or(&p);
+                self.inodes.get_or_create_inode(&parent_dir.to_string_lossy())
+            } else {
+                1
+            };
+            if let Some(attr) = self.get_file_attr(parent_ino) {
+                reply.entry(&TTL, &attr, 0);
+                return;
+            }
+        }
+
         if let Some(root) = self.inodes.get_path(parent) {
             let mut path = PathBuf::from(root);
-            path.push(name.to_str().unwrap());
-            let path_str = path.to_str().unwrap();
+            path.push(name_str.as_ref());
+            let path_str = path.to_string_lossy().to_string();
 
-            if let Ok(dirent) = self.fatx.stat(path_str) {
-                let inode = self.inodes.get_or_create_inode(path_str);
+            if let Ok(dirent) = self.fatx.stat(&path_str) {
+                let inode = self.inodes.get_or_create_inode(&path_str);
                 if let Some(attr) = self.dirent_to_attr(inode, &dirent) {
                     reply.entry(&TTL, &attr, 0);
                     return;
@@ -144,15 +197,11 @@ impl Filesystem for FuseFatxFs {
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        if let Some(path) = self.inodes.get_path(ino) {
-            if let Ok(dirent) = self.fatx.stat(&path) {
-                if let Some(attr) = self.dirent_to_attr(ino, &dirent) {
-                    reply.attr(&TTL, &attr);
-                    return;
-                }
-            }
+        if let Some(attr) = self.get_file_attr(ino) {
+            reply.attr(&TTL, &attr);
+        } else {
+            reply.error(ENOENT);
         }
-        reply.error(ENOENT);
     }
 
     fn read(
@@ -215,8 +264,8 @@ impl Filesystem for FuseFatxFs {
                     entries.push((1, FileType::Directory, String::from("..")));
                 } else {
                     let parent_path = dir_path.parent().unwrap_or(&dir_path);
-                    let parent_path_str = parent_path.to_str().unwrap();
-                    let parent_inode = self.inodes.get_or_create_inode(parent_path_str);
+                    let parent_path_str = parent_path.to_string_lossy().to_string();
+                    let parent_inode = self.inodes.get_or_create_inode(&parent_path_str);
                     entries.push((parent_inode, FileType::Directory, String::from("..")));
                 }
 
@@ -224,9 +273,9 @@ impl Filesystem for FuseFatxFs {
                     if dirent.is_file() || dirent.is_directory() {
                         let mut child_path = dir_path.clone();
                         child_path.push(dirent.file_name());
-                        let child_path_str = child_path.to_str().unwrap();
+                        let child_path_str = child_path.to_string_lossy().to_string();
 
-                        let child_inode = self.inodes.get_or_create_inode(child_path_str);
+                        let child_inode = self.inodes.get_or_create_inode(&child_path_str);
                         let ftype = if dirent.is_file() {
                             FileType::RegularFile
                         } else {
@@ -268,13 +317,16 @@ pub fn mount_fatx(
         inodes: InodeTracker::new(),
     };
 
+    // Ensure mount point directory exists
+    let _ = fs::create_dir_all(&mount_point);
+
     let options = vec![
         MountOption::RO,
         MountOption::FSName("fatx".to_string()),
-        MountOption::AutoUnmount,
+        MountOption::DefaultPermissions,
     ];
 
-    let session = fuser::spawn_mount2(fs, mount_point, &options)
+    let session = fuser::spawn_mount2(fs, &mount_point, &options)
         .context("Failed to spawn FUSE background session")?;
 
     Ok(session)

@@ -9,7 +9,7 @@ use crate::fatx::fat::{ClusterId, Fat};
 use crate::fatx::file::File;
 use crate::fatx::partition::{DEFAULT_PARTITION_LAYOUT, PartitionMapEntry};
 
-use zerocopy::byteorder::{big_endian::{U16, U32}, little_endian};
+use zerocopy::byteorder::big_endian::{U16, U32};
 use zerocopy::*;
 
 const FATX_SIGNATURE: u32 = 0x58544146; // XTAF
@@ -53,7 +53,7 @@ pub struct FatxFsConfig {
 
 impl FatxFsConfig {
     pub fn new(device_path: String) -> Self {
-        let partition = &DEFAULT_PARTITION_LAYOUT[4]; // Default to Partition 3 (Data / letter "e")
+        let partition = &DEFAULT_PARTITION_LAYOUT[7]; // Default to Xbox 360 Partition 3 (Data)
         Self {
             device_path,
             partition_offset_bytes: partition.offset_bytes,
@@ -242,6 +242,37 @@ impl FatxFs {
             self.handle(),
             dirent.first_cluster(),
         ))
+    }
+
+    pub fn auto_detect_partition(device_path: &str) -> Option<PartitionMapEntry> {
+        let mut device_handle = std::fs::File::open(device_path).ok()?;
+
+        let file_len = if device_path.starts_with("/dev/") {
+            unsafe {
+                let mut size: u64 = 0;
+                let ret = libc::ioctl(device_handle.as_raw_fd(), 0x80081272, &mut size);
+                if ret != 0 {
+                    return None;
+                }
+                size
+            }
+        } else {
+            device_handle.metadata().ok()?.len()
+        };
+
+        for entry in DEFAULT_PARTITION_LAYOUT {
+            if entry.offset_bytes + 4096 <= file_len {
+                if device_handle.seek(SeekFrom::Start(entry.offset_bytes)).is_ok() {
+                    if let Ok(superblock) = crate::fatx::read_struct::<_, Superblock>(&mut device_handle) {
+                        let sig = superblock.signature.get();
+                        if sig == FATX_SIGNATURE || sig == XTAF_SIGNATURE {
+                            return Some(*entry);
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 }
 

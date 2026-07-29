@@ -78,7 +78,7 @@ impl DirectoryEntry {
                         // Check current directory entry for target match
                         let dirent = dirent_result.unwrap()?;
                         if let DirectoryEntryKind::Valid = dirent.kind() {
-                            if dirent.file_name() != name.to_str().unwrap() {
+                            if dirent.file_name() != name.to_string_lossy() {
                                 continue;
                             }
                             if comp_idx == (num_components - 1) {
@@ -127,8 +127,10 @@ impl DirectoryEntry {
     }
 
     pub fn file_name(&self) -> String {
-        assert_eq!(self.kind(), DirectoryEntryKind::Valid);
-        let bytes = &self.filename_bytes[..self.filename_len as usize];
+        if self.kind() != DirectoryEntryKind::Valid {
+            return String::new();
+        }
+        let bytes = &self.filename_bytes[..self.filename_len.min(FATX_MAX_FILENAME_LEN as u8) as usize];
         String::from_utf8_lossy(bytes).into_owned()
     }
 
@@ -181,14 +183,20 @@ pub(crate) struct DirectoryEntryIterator {
     cluster: ClusterId,
     entry: i64,
     finished: bool,
+    visited_clusters: std::collections::HashSet<ClusterId>,
+    total_entries_count: u32,
 }
 
 impl DirectoryEntryIterator {
     pub(crate) fn new(cluster: ClusterId) -> Self {
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(cluster);
         Self {
             cluster,
             entry: -1,
             finished: false,
+            visited_clusters: visited,
+            total_entries_count: 0,
         }
     }
 
@@ -198,6 +206,12 @@ impl DirectoryEntryIterator {
         }
 
         self.entry += 1;
+        self.total_entries_count += 1;
+
+        if self.total_entries_count > 32768 {
+            self.finished = true;
+            return None;
+        }
 
         if (self.entry >= 0) && (self.entry as u64 >= fs.num_entries_per_cluster) {
             // Advance to next cluster
@@ -208,7 +222,13 @@ impl DirectoryEntryIterator {
                     return Some(Err(err));
                 }
                 Ok(FatEntry::Data(next_cluster)) => {
-                    self.cluster = next_cluster as ClusterId;
+                    let next_cid = next_cluster as ClusterId;
+                    if self.visited_clusters.contains(&next_cid) {
+                        self.finished = true;
+                        return None;
+                    }
+                    self.visited_clusters.insert(next_cid);
+                    self.cluster = next_cid;
                     self.entry = 0;
                 }
                 _ => {
@@ -223,6 +243,7 @@ impl DirectoryEntryIterator {
             self.cluster,
             self.entry as u64 * std::mem::size_of::<DirectoryEntry>() as u64,
         ) {
+            self.finished = true;
             return Some(Err(seek_error));
         }
 
@@ -260,7 +281,12 @@ impl Iterator for DirectoryEntryIntoIterator {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.fs.with_lock(|fs| {
+            let mut attempts = 0;
             loop {
+                attempts += 1;
+                if attempts > 5000 {
+                    return None;
+                }
                 // Filter-in only valid directory entry kinds
                 let item = self.entry_iter.next(fs);
                 if let Some(Ok(dirent)) = item {

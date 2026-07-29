@@ -36,7 +36,7 @@ pub struct Time {
 impl Time {
     pub fn from_fatx_encoding(encoded: u16) -> Self {
         Self {
-            hour: ((encoded >> 11) & 0x1f) as u8, // Wait, 0x1f is 5 bits (0-31), hour uses 5 bits! In original file it was (encoded >> 11) & 0xf, but 24 hours fits in 5 bits. Actually we just copy exactly what they had. Wait! The original had: `hour: ((encoded >> 11) & 0xf) as u8,` which might be a bug (hours 0-15?), but we copy it or fix it. Wait, let's copy the original exactly.
+            hour: ((encoded >> 11) & 0x1f) as u8,
             minute: ((encoded >> 5) & 0x1f) as u8,
             second: ((encoded & 0x1f) * 2) as u8,
         }

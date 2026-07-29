@@ -1,10 +1,64 @@
-import { Button, VerticalBox, HorizontalBox, LineEdit, StandardListView, TabWidget } from "std-widgets.slint";
+import { Button, VerticalBox, HorizontalBox, LineEdit, StandardListView, ScrollView, TabWidget } from "std-widgets.slint";
+
+struct LibraryItemData {
+    title_name: string,
+    title_id: string,
+    content_type: string,
+    path: string,
+    size_mb: string,
+}
+
+component InfoBadge inherits Rectangle {
+    in property <string> help-text: "";
+    width: 20px;
+    height: 20px;
+    border-radius: 10px;
+    background: ta.has-hover ? #3daee9 : #31363b;
+    border-width: 1px;
+    border-color: ta.has-hover ? #68c1f0 : #4d545c;
+
+    Text {
+        text: "?";
+        font-size: 12px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: ta.has-hover ? #ffffff : #a0a5aa;
+    }
+
+    ta := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { popup.show(); }
+    }
+
+    popup := PopupWindow {
+        x: 24px;
+        y: -10px;
+        width: 320px;
+        Rectangle {
+            background: #1c1f23;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: #3daee9;
+            VerticalBox {
+                padding: 10px;
+                Text {
+                    text: help-text;
+                    font-size: 12px;
+                    color: #eff0f1;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
 
 export component AppWindow inherits Window {
     title: "ULBOX360 - Xbox 360 & Original AIO GUI Tool";
-    preferred-width: 800px;
-    preferred-height: 600px;
-    
+    preferred-width: 960px;
+    preferred-height: 700px;
+
     // ISO to GOD properties
     in-out property <string> god-iso-path: "";
     in-out property <string> god-dest-path: "";
@@ -12,9 +66,13 @@ export component AppWindow inherits Window {
     in-out property <string> god-threads: "4";
     in-out property <float> god-progress: 0.0;
     in-out property <string> god-status: "Ready";
+    in-out property <string> god-queue-info: "";
+    in-out property <int> god-multidisc-mode: 0; // 0: Standard, 1: GTA V Style, 2: GOTY DLC Style
+    in-out property <string> god-multidisc-status: "Mode: Standard GOD Conversion";
     callback convert-to-god();
     callback select-god-iso();
     callback select-god-dest();
+    callback select-multidisc-mode(int);
 
     // XISO properties
     in-out property <string> xiso-source-path: "";
@@ -29,12 +87,34 @@ export component AppWindow inherits Window {
     // FATX FUSE properties
     in-out property <string> fatx-img-path: "";
     in-out property <string> fatx-mount-path: "";
+    in-out property <string> fatx-partition: "360_p3";
+    in-out property <string> fatx-partition-info: "Xbox 360 Partition 3 (Data)";
     in-out property <string> fatx-status: "Not mounted";
     in-out property <bool> fatx-is-mounted: false;
     callback mount-fatx();
     callback unmount-fatx();
     callback select-fatx-img();
     callback select-fatx-mount();
+    callback select-partition(string);
+    callback auto-detect-partition();
+    callback scan-system-drives();
+    callback open-mount-folder();
+    callback relaunch-root();
+
+    // X Library properties
+    in-out property <string> lib-scan-path: "";
+    in-out property <string> lib-status: "Select a Content folder or drive to scan Xbox library.";
+    in-out property <[LibraryItemData]> lib-items: [];
+    callback select-lib-path();
+    callback scan-lib();
+
+    // Drive Preparer properties
+    in-out property <string> prep-device-path: "/dev/sda";
+    in-out property <bool> prep-include-hddx: true;
+    in-out property <float> prep-progress: 0.0;
+    in-out property <string> prep-status: "Select target disk device to prepare for Xbox 360 console.";
+    callback select-prep-device();
+    callback prepare-xbox-drive();
 
     // FTP properties
     in-out property <string> ftp-ip: "192.168.1.100";
@@ -48,12 +128,12 @@ export component AppWindow inherits Window {
     callback start-ftp-upload();
 
     VerticalBox {
-        padding: 10px;
-        spacing: 10px;
-        
+        padding: 12px;
+        spacing: 12px;
+
         Text {
             text: "ULBOX360 - Xbox 360 & Original AIO GUI Tool";
-            font-size: 20px;
+            font-size: 22px;
             font-weight: 700;
             horizontal-alignment: center;
         }
@@ -64,12 +144,13 @@ export component AppWindow inherits Window {
                 VerticalBox {
                     spacing: 12px;
                     padding: 10px;
-                    
+
                     HorizontalBox {
                         spacing: 8px;
                         Text { text: "Source ISO:"; width: 120px; vertical-alignment: center; }
                         LineEdit { text: god-iso-path; read-only: true; }
                         Button { text: "Browse..."; height: 28px; clicked => { root.select-god-iso(); } }
+                        InfoBadge { help-text: "Select one or multiple Xbox 360 .iso files.\nFor 2-Disc games (e.g. GTA V, Fallout NV GOTY), select Disc 1 and Disc 2 together."; }
                     }
 
                     HorizontalBox {
@@ -77,6 +158,45 @@ export component AppWindow inherits Window {
                         Text { text: "Destination:"; width: 120px; vertical-alignment: center; }
                         LineEdit { text: god-dest-path; read-only: true; }
                         Button { text: "Browse..."; height: 28px; clicked => { root.select-god-dest(); } }
+                        InfoBadge { help-text: "Destination directory on your PC or USB drive where GOD game containers (Content/0000000000000000/...) will be created."; }
+                    }
+
+                    if god-queue-info != "": VerticalBox {
+                        spacing: 4px;
+                        Text { text: "Disc Info:"; font-weight: 700; }
+                        Rectangle {
+                            background: #25282c;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: #3daee9;
+                            VerticalBox {
+                                padding: 8px;
+                                Text {
+                                    text: god-queue-info;
+                                    font-size: 13px;
+                                    wrap: word-wrap;
+                                    color: #eff0f1;
+                                }
+                            }
+                        }
+                    }
+
+                    HorizontalBox {
+                        spacing: 12px;
+                        Text { text: "2-Disc X360 Mode:"; vertical-alignment: center; font-weight: 500; }
+                        Button {
+                            text: god-multidisc-mode == 0 ? "[ Standard GOD Conversion ]" :
+                                  god-multidisc-mode == 1 ? "[ 2-Disc Install: GTA V Style (Install + Play) ]" :
+                                  "[ 2-Disc Install: GOTY DLC Style (Game + DLC) ]";
+                            clicked => {
+                                god-multidisc-mode = Math.mod(god-multidisc-mode + 1, 3);
+                                root.select-multidisc-mode(god-multidisc-mode);
+                            }
+                            height: 28px;
+                        }
+                        InfoBadge {
+                            help-text: "Choose 2-Disc handling strategy:\n\n• Standard GOD Conversion: Converts selected ISOs directly into GOD format.\n\n• GTA V Style (Install + Play): Disc 1 contains mandatory install packages (extracted into Content/), while Disc 2 is converted to Play GOD.\n\n• GOTY DLC Style (Game + DLC): Disc 1 (Main Game) is converted to GOD, while Disc 2's DLC packages (e.g. Fallout NV, Skyrim) are extracted directly into the DLC folder.";
+                        }
                     }
 
                     HorizontalBox {
@@ -84,18 +204,19 @@ export component AppWindow inherits Window {
                         HorizontalBox {
                             spacing: 8px;
                             Text { text: "Trim ISO:"; vertical-alignment: center; }
-                            // Simple checkbox simulation
                             Button {
                                 text: god-trim ? "[X]" : "[ ]";
                                 clicked => { god-trim = !god-trim; }
                                 width: 50px;
                                 height: 28px;
                             }
+                            InfoBadge { help-text: "Trims empty padding sectors from ISO images to shrink size and speed up conversion."; }
                         }
                         HorizontalBox {
                             spacing: 8px;
                             Text { text: "Threads:"; vertical-alignment: center; }
                             LineEdit { text: god-threads; width: 60px; }
+                            InfoBadge { help-text: "Number of CPU threads to use for parallel GOD part file building (Default: 4)."; }
                         }
                     }
 
@@ -104,17 +225,16 @@ export component AppWindow inherits Window {
                         Button {
                             text: "Convert to GOD";
                             primary: true;
-                            width: 220px;
-                            height: 30px;
+                            width: 260px;
+                            height: 32px;
                             clicked => { root.convert-to-god(); }
                         }
                     }
 
                     Text { text: "Status: " + god-status; font-weight: 500; }
-                    
-                    // Simple progress bar (Breeze Dark styled)
+
                     Rectangle {
-                        height: 20px;
+                        height: 24px;
                         background: #2a2e32;
                         border-radius: 4px;
                         border-width: 1px;
@@ -124,8 +244,138 @@ export component AppWindow inherits Window {
                             y: 1px;
                             width: (parent.width - 2px) * god-progress;
                             height: parent.height - 2px;
-                            background: #3daee9; // Breeze Blue
+                            background: #3daee9;
                             border-radius: 3px;
+                        }
+                        Text {
+                            text: Math.round(god-progress * 100) + "%";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                            font-weight: 700;
+                            color: god-progress > 0.5 ? #ffffff : #c3c7cb;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "X Library";
+                VerticalBox {
+                    spacing: 10px;
+                    padding: 10px;
+
+                    HorizontalBox {
+                        spacing: 8px;
+                        Text { text: "Content Folder:"; width: 120px; vertical-alignment: center; }
+                        LineEdit { text: lib-scan-path; read-only: false; edited(val) => { lib-scan-path = val; } }
+                        Button { text: "Browse..."; height: 28px; clicked => { root.select-lib-path(); } }
+                        Button { text: "Scan Library"; height: 28px; primary: true; clicked => { root.scan-lib(); } }
+                        InfoBadge { help-text: "Select your Content/ or GOD target directory to decode obscure 8-character Title IDs (e.g. 545408A7) into game names like GTA V, Minecraft, Fallout NV."; }
+                    }
+
+                    Text { text: lib-status; font-weight: 500; color: #3daee9; }
+
+                    // Scrollable Library Items List
+                    ScrollView {
+                        height: 420px;
+                        VerticalBox {
+                            padding: 4px;
+                            spacing: 6px;
+                            for item in lib-items: Rectangle {
+                                background: #25282c;
+                                border-radius: 4px;
+                                height: 38px;
+                                HorizontalBox {
+                                    padding: 6px;
+                                    spacing: 16px;
+                                    Text { text: item.title_name; font-weight: 700; width: 300px; vertical-alignment: center; color: #eff0f1; }
+                                    Text { text: "ID: " + item.title_id; width: 120px; vertical-alignment: center; color: #3daee9; }
+                                    Text { text: item.content_type; width: 220px; vertical-alignment: center; color: #c3c7cb; }
+                                    Text { text: item.size_mb + " MB"; width: 100px; vertical-alignment: center; color: #90959a; }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Prepare Console Drive";
+                VerticalBox {
+                    spacing: 12px;
+                    padding: 10px;
+
+                    Rectangle {
+                        background: #1e2226;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: #3daee9;
+                        VerticalBox {
+                            padding: 8px;
+                            Text {
+                                text: "FATX Console Drive Preparer formats raw physical disks (/dev/sda, /dev/sdb) or disk images into an Xbox 360 internal console HDD.\nIt creates Partition 3 (Data), Partition 2 (System), Partition 1 (Cache), and HDDX (Original Xbox Backwards Compatibility).";
+                                font-size: 12px;
+                                color: #c3c7cb;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    HorizontalBox {
+                        spacing: 8px;
+                        Text { text: "Target Drive / Image:"; width: 150px; vertical-alignment: center; }
+                        LineEdit { text: prep-device-path; read-only: false; edited(val) => { prep-device-path = val; } }
+                        Button { text: "Scan Drives..."; height: 28px; clicked => { root.select-prep-device(); } }
+                        Button { text: "Fix Permissions"; height: 28px; clicked => { root.relaunch-root(); } }
+                        InfoBadge { help-text: "Path to raw disk device (/dev/sda, /dev/sdb) or raw image file to prepare for Xbox 360."; }
+                    }
+
+                    HorizontalBox {
+                        spacing: 12px;
+                        Text { text: "Original Xbox Emulation (HDDX):"; vertical-alignment: center; font-weight: 500; }
+                        Button {
+                            text: prep-include-hddx ? "[X] Include HDDX Backwards Compatibility Partition (512MB)" : "[ ] Exclude HDDX Partition";
+                            clicked => { prep-include-hddx = !prep-include-hddx; }
+                            height: 28px;
+                        }
+                        InfoBadge { help-text: "Creates the HDDX partition (offset 0x110EB0000) required to run Original Xbox backwards compatible games on Xbox 360."; }
+                    }
+
+                    HorizontalBox {
+                        alignment: center;
+                        Button {
+                            text: "Format & Prepare Xbox 360 HDD";
+                            primary: true;
+                            width: 280px;
+                            height: 36px;
+                            clicked => { root.prepare-xbox-drive(); }
+                        }
+                    }
+
+                    Text { text: "Status: " + prep-status; font-weight: 500; }
+
+                    Rectangle {
+                        height: 24px;
+                        background: #2a2e32;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: #4d545c;
+                        Rectangle {
+                            x: 1px;
+                            y: 1px;
+                            width: (parent.width - 2px) * prep-progress;
+                            height: parent.height - 2px;
+                            background: #3daee9;
+                            border-radius: 3px;
+                        }
+                        Text {
+                            text: Math.round(prep-progress * 100) + "%";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                            font-weight: 700;
+                            color: prep-progress > 0.5 ? #ffffff : #c3c7cb;
                         }
                     }
                 }
@@ -145,6 +395,7 @@ export component AppWindow inherits Window {
                         LineEdit { text: xiso-source-path; read-only: true; }
                         Button { text: "Select File..."; height: 28px; clicked => { root.select-xiso-source(true); } }
                         Button { text: "Select Folder..."; height: 28px; clicked => { root.select-xiso-source(false); } }
+                        InfoBadge { help-text: "Select an Xbox ISO file to extract files from, or select a local folder to pack into an ISO image."; }
                     }
 
                     HorizontalBox {
@@ -153,6 +404,7 @@ export component AppWindow inherits Window {
                         LineEdit { text: xiso-dest-path; read-only: true; }
                         Button { text: "Select File..."; height: 28px; clicked => { root.select-xiso-dest(true); } }
                         Button { text: "Select Folder..."; height: 28px; clicked => { root.select-xiso-dest(false); } }
+                        InfoBadge { help-text: "Destination folder for extracted XISO files, or target file path for built .iso file."; }
                     }
 
                     HorizontalBox {
@@ -160,14 +412,14 @@ export component AppWindow inherits Window {
                         spacing: 16px;
                         Button {
                             text: "Extract (Unpack ISO)";
-                            width: 180px;
-                            height: 30px;
+                            width: 200px;
+                            height: 32px;
                             clicked => { root.unpack-xiso(); }
                         }
                         Button {
                             text: "Build (Pack to ISO)";
-                            width: 180px;
-                            height: 30px;
+                            width: 200px;
+                            height: 32px;
                             clicked => { root.pack-xiso(); }
                         }
                     }
@@ -175,7 +427,7 @@ export component AppWindow inherits Window {
                     Text { text: "Status: " + xiso-status; }
 
                     Rectangle {
-                        height: 20px;
+                        height: 24px;
                         background: #2a2e32;
                         border-radius: 4px;
                         border-width: 1px;
@@ -188,6 +440,14 @@ export component AppWindow inherits Window {
                             background: #3daee9;
                             border-radius: 3px;
                         }
+                        Text {
+                            text: Math.round(xiso-progress * 100) + "%";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                            font-weight: 700;
+                            color: xiso-progress > 0.5 ? #ffffff : #c3c7cb;
+                        }
                     }
                 }
             }
@@ -195,14 +455,33 @@ export component AppWindow inherits Window {
             Tab {
                 title: "FATX Mounter";
                 VerticalBox {
-                    spacing: 12px;
+                    spacing: 10px;
                     padding: 10px;
+
+                    Rectangle {
+                        background: #1e2226;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: #3daee9;
+                        VerticalBox {
+                            padding: 6px;
+                            Text {
+                                text: "FATX is an Xbox proprietary filesystem not supported natively by Linux kernel mount. Physical drives (/dev/sda) require block permissions. Click 'Fix Drive Permissions' below if permission is denied.";
+                                font-size: 12px;
+                                color: #c3c7cb;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
 
                     HorizontalBox {
                         spacing: 8px;
                         Text { text: "FATX Device/Image:"; width: 150px; vertical-alignment: center; }
-                        LineEdit { text: fatx-img-path; read-only: true; }
-                        Button { text: "Browse..."; height: 28px; clicked => { root.select-fatx-img(); } }
+                        LineEdit { text: fatx-img-path; read-only: false; edited(val) => { fatx-img-path = val; } }
+                        Button { text: "Browse File..."; height: 28px; clicked => { root.select-fatx-img(); } }
+                        Button { text: "Scan Drives..."; height: 28px; primary: false; clicked => { root.scan-system-drives(); } }
+                        Button { text: "Fix Drive Permissions"; height: 28px; clicked => { root.relaunch-root(); } }
+                        InfoBadge { help-text: "Path to raw disk image file (.img/.bin) or physical connected Xbox drive (/dev/sda, /dev/sdb).\nIf permission is denied on /dev/sda, click 'Fix Drive Permissions' to authenticate via pkexec and grant access to the drive."; }
                     }
 
                     HorizontalBox {
@@ -210,14 +489,43 @@ export component AppWindow inherits Window {
                         Text { text: "Mount Folder:"; width: 150px; vertical-alignment: center; }
                         LineEdit { text: fatx-mount-path; read-only: true; }
                         Button { text: "Browse..."; height: 28px; clicked => { root.select-fatx-mount(); } }
+                        InfoBadge { help-text: "Local empty folder where FUSE will mount the FATX drive."; }
+                    }
+
+                    VerticalBox {
+                        spacing: 6px;
+                        HorizontalBox {
+                            spacing: 8px;
+                            Text { text: "Select Partition Layout:"; font-weight: 500; vertical-alignment: center; }
+                            InfoBadge { help-text: "Select partition layout:\n\n• 360 P3 (Data): Main Xbox 360 user partition (Games, Content, Profiles).\n• 360 P2 (Sys): Xbox 360 System/Dashboard partition.\n• 360 P1 (Cache): System cache.\n• Original E/X/Y/Z/C: Xbox Original partition layouts.\n• Direct Volume (0x0): Raw partition starting at byte 0."; }
+                        }
+                        HorizontalBox {
+                            spacing: 6px;
+                            Button { text: "360 P3 (Data)"; clicked => { root.select-partition("360_p3"); } }
+                            Button { text: "360 P2 (Sys)"; clicked => { root.select-partition("360_p2"); } }
+                            Button { text: "360 P1 (Cache)"; clicked => { root.select-partition("360_p1"); } }
+                            Button { text: "Original E"; clicked => { root.select-partition("e"); } }
+                            Button { text: "X"; clicked => { root.select-partition("x"); } }
+                            Button { text: "Y"; clicked => { root.select-partition("y"); } }
+                            Button { text: "Z"; clicked => { root.select-partition("z"); } }
+                            Button { text: "C"; clicked => { root.select-partition("c"); } }
+                            Button { text: "Offset 0x0"; clicked => { root.select-partition("raw_0"); } }
+                        }
+                        HorizontalBox {
+                            spacing: 8px;
+                            Button { text: "Auto-Detect Partition"; primary: false; clicked => { root.auto-detect-partition(); } }
+                            Text { text: "Active: " + fatx-partition-info; vertical-alignment: center; font-weight: 700; color: #3daee9; }
+                        }
                     }
 
                     HorizontalBox {
                         alignment: center;
+                        spacing: 12px;
                         Button {
                             text: fatx-is-mounted ? "Unmount FATX" : "Mount FATX (FUSE)";
-                            width: 220px;
-                            height: 30px;
+                            primary: true;
+                            width: 240px;
+                            height: 32px;
                             clicked => {
                                 if (fatx-is-mounted) {
                                     root.unmount-fatx();
@@ -225,6 +533,12 @@ export component AppWindow inherits Window {
                                     root.mount-fatx();
                                 }
                             }
+                        }
+                        if fatx-is-mounted: Button {
+                            text: "Open Mounted Folder";
+                            width: 180px;
+                            height: 32px;
+                            clicked => { root.open-mount-folder(); }
                         }
                     }
 
@@ -244,6 +558,7 @@ export component AppWindow inherits Window {
                         LineEdit { text: ftp-ip; edited(val) => { ftp-ip = val; } }
                         Text { text: "Port:"; vertical-alignment: center; }
                         LineEdit { text: ftp-port; width: 60px; edited(val) => { ftp-port = val; } }
+                        InfoBadge { help-text: "IP address and FTP port of your modded Xbox 360 running Aurora or FreestyleDash."; }
                     }
 
                     HorizontalBox {
@@ -252,6 +567,7 @@ export component AppWindow inherits Window {
                         LineEdit { text: ftp-user; edited(val) => { ftp-user = val; } }
                         Text { text: "Password:"; vertical-alignment: center; }
                         LineEdit { text: ftp-pass; edited(val) => { ftp-pass = val; } }
+                        InfoBadge { help-text: "FTP credentials (Default for Aurora/FSD is username 'xbox' and password 'xbox')."; }
                     }
 
                     HorizontalBox {
@@ -259,14 +575,16 @@ export component AppWindow inherits Window {
                         Text { text: "Local Directory:"; width: 120px; vertical-alignment: center; }
                         LineEdit { text: ftp-local-path; read-only: true; }
                         Button { text: "Browse..."; height: 28px; clicked => { root.select-ftp-local(); } }
+                        InfoBadge { help-text: "Select a converted GOD game directory or game folder to upload directly to console over network."; }
                     }
 
                     HorizontalBox {
                         alignment: center;
                         Button {
                             text: "Upload to Console (Aurora)";
-                            width: 240px;
-                            height: 30px;
+                            primary: true;
+                            width: 260px;
+                            height: 32px;
                             clicked => { root.start-ftp-upload(); }
                         }
                     }
@@ -274,7 +592,7 @@ export component AppWindow inherits Window {
                     Text { text: "FTP Status: " + ftp-status; }
 
                     Rectangle {
-                        height: 20px;
+                        height: 24px;
                         background: #2a2e32;
                         border-radius: 4px;
                         border-width: 1px;
@@ -286,6 +604,14 @@ export component AppWindow inherits Window {
                             height: parent.height - 2px;
                             background: #3daee9;
                             border-radius: 3px;
+                        }
+                        Text {
+                            text: Math.round(ftp-progress * 100) + "%";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 12px;
+                            font-weight: 700;
+                            color: ftp-progress > 0.5 ? #ffffff : #c3c7cb;
                         }
                     }
                 }

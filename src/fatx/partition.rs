@@ -1,3 +1,4 @@
+#[derive(Clone, Copy, Debug)]
 pub struct PartitionMapEntry {
     pub letter: &'static str,
     pub name: &'static str,
@@ -54,6 +55,12 @@ pub const DEFAULT_PARTITION_LAYOUT: &[PartitionMapEntry] = &[
         name: "Xbox 360 Partition 3 (Data)",
         offset_bytes: 0x130EB0000,
         size_bytes: 0x20000000000, // 2TB max
+    },
+    PartitionMapEntry {
+        letter: "raw_0",
+        name: "Direct Volume (Offset 0x0)",
+        offset_bytes: 0x0,
+        size_bytes: 0x20000000000,
     },
 ];
 
