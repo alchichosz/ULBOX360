@@ -91,10 +91,10 @@ To compile and package the app yourself into a portable AppImage container, run 
 ULBOX360 is built using the following outstanding open-source Rust projects:
 * **[Slint](https://github.com/slint-ui/slint)** - Next-generation native UI toolkit.
 * **[iso2god-rs](https://github.com/iliazeus/iso2god-rs)** - Pure Rust port of the ISO2GOD Xbox 360 engine.
-* **[xdvdfs](https://github.com/xenia-project/xdvdfs)** - Pure Rust implementation of the Xbox DVD Filesystem.
-* **[fatx](https://github.com/mborgerson/fatx-rs)** - Rust implementation of the FATX filesystem parser.
-* **[fuser](https://github.com/cgreene/fuser)** - FUSE implementation for Rust.
-* **[rfd](https://github.com/emilk/rfd)** - Native OS file dialogs wrapper.
+* **[xdvdfs](https://github.com/antangelo/xdvdfs)** - Pure Rust implementation of the Xbox DVD Filesystem.
+* **[fatx](https://github.com/mborgerson/fatx)** - Rust implementation of the FATX filesystem parser.
+* **[fuser](https://github.com/cberner/fuser)** - FUSE implementation for Rust.
+* **[rfd](https://github.com/Polymeilex/rfd)** - Native OS file dialogs wrapper.
 
 ---
 
