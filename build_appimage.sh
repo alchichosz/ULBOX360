@@ -1,48 +1,123 @@
 #!/bin/bash
 set -e
 
-echo "=== Step 1: Compiling ULBOX360 in Release Mode ==="
+APP="ULBOX360"
+BIN="ulbox360"
+
+VERSION=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)
+
+APPDIR="packaging/AppDir"
+DIST="dist"
+TOOLS="packaging/tools"
+
+OUT="${APP}-${VERSION}-x86_64.AppImage"
+
+echo
+echo "========================================="
+echo " ULBOX360 AppImage Builder"
+echo " Version: ${VERSION}"
+echo "========================================="
+echo
+
+echo "[1/5] Cleaning..."
+
+rm -rf "${APPDIR}"
+mkdir -p "${APPDIR}/usr/bin"
+mkdir -p "${DIST}"
+
+echo
+echo "[2/5] Building release..."
+
 cargo build --release
 
-echo "=== Step 2: Preparing AppDir Directory ==="
-rm -rf AppDir
-mkdir -p AppDir/usr/bin
+cp target/release/${BIN} \
+   "${APPDIR}/usr/bin/"
 
-# Copy target binary
-cp target/release/ulbox360 AppDir/usr/bin/
+cp ulbox360.desktop "${APPDIR}/"
+cp ulbox360.svg "${APPDIR}/"
 
-# Copy desktop file and icon
-cp ulbox360.desktop AppDir/
-cp ulbox360.svg AppDir/
-
-# Create AppRun entry point
-cat << 'EOF' > AppDir/AppRun
+cat > "${APPDIR}/AppRun" <<'EOF'
 #!/bin/sh
-SELF=$(readlink -f "$0")
-HERE=$(dirname "$SELF")
-export PATH="${HERE}/usr/bin:${PATH}"
 
-# Execute application passing all args
+HERE="$(dirname "$(readlink -f "$0")")"
+
+export PATH="${HERE}/usr/bin:$PATH"
+
 exec ulbox360 "$@"
 EOF
-chmod +x AppDir/AppRun
 
-echo "=== Step 3: Fetching appimagetool ==="
-if [ ! -f appimagetool ] || grep -q "Not Found" appimagetool; then
-    echo "Downloading appimagetool..."
-    rm -f appimagetool
-    curl -L -o appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-    chmod +x appimagetool
+chmod +x "${APPDIR}/AppRun"
+
+cat > "${APPDIR}/usr/bin/qt.conf" <<EOF
+[Paths]
+Plugins = ../plugins
+EOF
+
+echo
+echo "[3/5] Checking linuxdeploy..."
+if [ ! -x "${TOOLS}/linuxdeploy" ]; then
+    echo "Downloading linuxdeploy..."
+
+    mkdir -p "${TOOLS}"
+
+    curl -L \
+        https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage \
+        -o "${TOOLS}/linuxdeploy"
+
+    chmod +x "${TOOLS}/linuxdeploy"
 fi
 
-echo "=== Step 4: Building AppImage ==="
-# Using --appimage-extract-and-run to ensure compatibility in various environments without requiring root loop devices
-ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir ULBOX360-x86_64.AppImage
+if [ ! -x "${TOOLS}/linuxdeploy-plugin-qt" ]; then
+    echo "Downloading linuxdeploy Qt plugin..."
 
-echo "=== Step 5: Relocating Release & Cleaning Up ==="
-mkdir -p dist
-mv ULBOX360-x86_64.AppImage dist/
-rm -rf AppDir
+    curl -L \
+        https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage \
+        -o "${TOOLS}/linuxdeploy-plugin-qt"
 
-echo "=== Build Complete: dist/ULBOX360-x86_64.AppImage ==="
-ls -lh dist/ULBOX360-x86_64.AppImage
+    chmod +x "${TOOLS}/linuxdeploy-plugin-qt"
+fi
+
+export QMAKE=qmake6
+
+echo
+echo "[4/5] Building AppImage..."
+
+ARCH=x86_64 \
+OUTPUT="${OUT}" \
+ARCH=x86_64 \
+"${TOOLS}/linuxdeploy" \
+    --appdir "${APPDIR}" \
+    --desktop-file ulbox360.desktop \
+    --icon-file ulbox360.svg \
+    --plugin qt \
+    --output appimage
+
+echo
+echo "Locating generated AppImage..."
+
+APPIMAGE=$(find . -type f -name "*.AppImage" \
+    ! -path "./${DIST}/*" \
+    | head -n1)
+
+if [ -z "${APPIMAGE}" ]; then
+    echo
+    echo "ERROR: AppImage was not generated."
+    exit 1
+fi
+
+mkdir -p "${DIST}"
+
+mv -f "${APPIMAGE}" "${DIST}/${OUT}"
+
+echo
+echo "[5/5] Cleaning..."
+
+rm -rf "${APPDIR}"
+
+echo
+echo "========================================="
+echo "Done."
+echo "========================================="
+echo
+
+ls -lh "${DIST}/${OUT}"
